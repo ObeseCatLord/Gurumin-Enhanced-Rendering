@@ -137,10 +137,6 @@ head, rather than per eye.
   behaviour: `CameraZoomInKey`, `CameraZoomOutKey`, `CameraWheelZoom`.
 - The game remains a 30 Hz simulation; interpolation smooths rendering rather
   than converting its entire gameplay and animation system to a new tick rate.
-- Runtime validation included 3440×1440 at approximately 175 FPS with 30 Hz gameplay,
-  Steam Input orbit, equipment rewards, menus, shadows and the outdoor Manual.
-  Recent cinematic/attachment corrections also have isolated x86 regression tests;
-  report remaining scene-specific issues with a reproduction and screenshot.
 
 ## Build and tests
 
