@@ -520,7 +520,8 @@ Issues #1 and #2, 2026-11-22:
   camera globals and the per-frame copies 0x1dffed8/0x1e00ee8 during the scene
   root (copies only while zoomed: A/B at 250% in the village showed a missing
   ground wedge without them; plain orbit keeps the native copies as in 1.0).
-  Zoom applies only with the gameplay HUD visible (the title demo's scripted
-  camera otherwise zoomed). Zoom-out uses the existing camera segment constraint. The game's own
+  Zoom applies only with the gameplay HUD visible: before this gate the
+  new-game intro's scripted camera was zoomed; with it, intro frames at 100%
+  and 250% match. Zoom-out uses the existing camera segment constraint. The game's own
   wheel rotation is config key WROT (default 1, verified: plain wheel turns the
   camera), so wheel zoom is Ctrl+wheel unless WROT=0 or CameraWheelZoom=2.
