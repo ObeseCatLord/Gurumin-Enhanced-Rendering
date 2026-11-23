@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0 — 2026-11-22
+
+- Fix the scene being cropped to a 4:3 area with stale title-screen art beside
+  it when the game's own Depth of Field option is on (issue #1). The two native
+  depth-of-field copy quads now see the real viewport instead of the
+  proportional HUD canvas.
+- Free camera distance (issue #2): zoom with PageUp/PageDown or Ctrl+mouse
+  wheel, with or without a gamepad; the plain wheel zooms when the game's
+  *Rotate Camera With Wheel* is off. The distance stays where it is left and is
+  saved (`CameraDistance`, 60–250%); walls stop a zoomed-out camera.
+  `CameraStickZoom=1` makes right stick up/down zoom instead of tilting, so the
+  camera height stays fixed.
+  A zoomed camera also picks map cells from where it really is, so scenery
+  stays complete; scripted scenes and demos keep their own framing.
+
 ## 1.1.0 — 2026-10-14
 
 - Optional 6DoF OpenXR VR mode (default off; launcher toggle or `-vr`):

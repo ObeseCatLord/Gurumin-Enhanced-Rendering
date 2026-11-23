@@ -131,7 +131,7 @@ static unsigned __cdecl verifyCameraUpdate(float *eye, float *target) {
   return 77;
 }
 static CameraVector capturedViewEye, capturedViewTarget;
-static bool expectWorldPublication, replaceWorldEye;
+static bool expectWorldPublication, replaceWorldEye, expectZoomPublication;
 static unsigned worldCalls;
 static float *__cdecl verifyCameraView(float *out,CameraVector eye,
     CameraVector target,float *axes,float roll) {
@@ -146,6 +146,13 @@ static void __cdecl verifyCameraWorld() {
     assert(!memcmp(reinterpret_cast<void*>(gameBase+0x198f690),orbitRenderPose.target.v,16));
     for(unsigned rva:{0x1d7b5b0u,0x1dffed8u})
       assert(!memcmp(reinterpret_cast<void*>(gameBase+rva),orbitRenderPose.nativeEye.v,16));
+  }
+  if(expectZoomPublication) {
+    // A zoomed camera is drawn, and its map cells chosen, from where it is.
+    for(unsigned rva:{0x1cf17a0u,0x1dffed8u})
+      assert(!memcmp(reinterpret_cast<void*>(gameBase+rva),orbitRenderPose.renderEye.v,12));
+    for(unsigned rva:{0x198f690u,0x1e00ee8u})
+      assert(!memcmp(reinterpret_cast<void*>(gameBase+rva),orbitRenderPose.target.v,12));
   }
   if(replaceWorldEye) game<float>(0x1cf17a0)=1234;
 }
@@ -791,6 +798,23 @@ int main() {
   cameraWorldHook(); ++frames; lastHudFrame=frames; cameraWorldHook();
   assert(worldCalls==2 && !memcmp(reinterpret_cast<void*>(gameBase+0x1cf17a0),rawEye.v,16));
   assert(!memcmp(reinterpret_cast<void*>(gameBase+0x1dffed8),rawEye.v,16));
+  {
+    // Zoomed: publication moves the frame copies too, and restores them after.
+    auto savedPose=orbitRenderPose;
+    float frameEye[4],frameTarget[4];
+    memcpy(frameEye,reinterpret_cast<void*>(gameBase+0x1dffed8),16);
+    memcpy(frameTarget,reinterpret_cast<void*>(gameBase+0x1e00ee8),16);
+    orbitRenderPose.renderEye=orbitRenderPose.eye;
+    assert(gurumin::zoomCamera(orbitRenderPose.renderEye.v,orbitRenderPose.target.v,1.5f));
+    orbitRenderPose.zoomed=true;
+    expectWorldPublication=false; expectZoomPublication=true;
+    cameraWorldHook(); assert(worldCalls==3);
+    expectZoomPublication=false;
+    assert(!memcmp(reinterpret_cast<void*>(gameBase+0x1cf17a0),rawEye.v,16));
+    assert(!memcmp(reinterpret_cast<void*>(gameBase+0x1dffed8),frameEye,16));
+    assert(!memcmp(reinterpret_cast<void*>(gameBase+0x1e00ee8),frameTarget,16));
+    orbitRenderPose=savedPose; worldCalls=2;
+  }
   expectWorldPublication=false; game<float>(0x9a9b00)+=1;
   cameraWorldHook(); assert(worldCalls==3);
   memcpy(reinterpret_cast<void*>(gameBase+0x9a9b00),builtView,64);

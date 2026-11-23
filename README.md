@@ -127,6 +127,14 @@ head, rather than per eye.
   dungeons still allow freecam. Turn it off to orbit around the town camera
   anchors too. Movement follows the rotated view while town freecam is active.
   **Free camera** itself remains off by default; **Invert X** remains on.
+- **Camera distance**: with Free camera enabled, zoom in and out with
+  PageUp/PageDown or Ctrl+mouse wheel, with or without a gamepad. The plain
+  wheel zooms too when the game's own *Rotate Camera With Wheel* option is off
+  (launcher, Keyboard & Mouse). The distance stays where you leave it and is
+  saved as `CameraDistance` in `GuruminModern.ini`; walls stop a zoomed-out
+  camera. Set `CameraStickZoom=1` to make right stick up/down zoom instead of
+  raising and lowering the camera, so its height stays fixed. Keys and wheel
+  behaviour: `CameraZoomInKey`, `CameraZoomOutKey`, `CameraWheelZoom`.
 - The game remains a 30 Hz simulation; interpolation smooths rendering rather
   than converting its entire gameplay and animation system to a new tick rate.
 - Runtime validation included 3440×1440 at approximately 175 FPS with 30 Hz gameplay,

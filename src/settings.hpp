@@ -49,6 +49,13 @@ struct ModernSettings {
   bool freeCamera = false, cameraOutOfTownOnly = true;
   bool invertX = true, invertY = false;
   int cameraYawSpeed = 120, cameraPitchSpeed = 90, cameraDeadzone = 8689;
+  // Free camera distance in percent of the authored distance, set in game.
+  int cameraDistance = 100;
+  bool cameraStickZoom = false; // Right stick up/down zooms instead of tilting.
+  // Mouse wheel zoom: 0 never, 1 when the game's own wheel rotation is off
+  // (Ctrl+wheel always), 2 always.
+  int cameraWheelZoom = 1;
+  int cameraZoomInKey = 0x21, cameraZoomOutKey = 0x22; // PageUp / PageDown.
   int shadowResolution = 256;
   int antiAliasing = 0; // Native, FXAA Low, FXAA High.
   bool uiFiltering = true, worldFiltering = true;
@@ -224,7 +231,53 @@ inline bool orbitFromAnchor(float *eye, const float *target, float yaw,
   if(acceptedPitch) *acceptedPitch=float(elevation-baseElevation);
   return true;
 }
+constexpr int MinCameraDistance = 60, MaxCameraDistance = 250;
+inline int clampCameraDistance(int percent) {
+  return std::clamp(percent, MinCameraDistance, MaxCameraDistance);
+}
+// Move the eye along the target->eye line; the view direction is unchanged.
+inline bool zoomCamera(float *eye, const float *target, float scale) {
+  if (!eye || !target || !std::isfinite(scale) || scale <= 0)
+    return false;
+  float next[3];
+  for (int i = 0; i < 3; ++i) {
+    if (!std::isfinite(eye[i]) || !std::isfinite(target[i]))
+      return false;
+    next[i] = target[i] + (eye[i] - target[i]) * scale;
+    if (!std::isfinite(next[i]))
+      return false;
+  }
+  for (int i = 0; i < 3; ++i)
+    eye[i] = next[i];
+  return true;
+}
+// Zoom requests: wheel notches and held keys change a target distance that
+// the rendered distance eases toward each camera tick.
+struct CameraZoom {
+  float target = 100, current = 100;
+  void reset(int percent) { target = current = float(clampCameraDistance(percent)); }
+  void step(float percent) {
+    if (std::isfinite(percent))
+      target = std::clamp(target + percent, float(MinCameraDistance),
+                          float(MaxCameraDistance));
+  }
+  // `ticks` elapsed 30 Hz camera ticks; returns true while still easing.
+  bool ease(unsigned ticks) {
+    for (unsigned i = 0; i < std::min(ticks, 30u); ++i)
+      current += (target - current) * .25f;
+    if (std::abs(target - current) < .05f)
+      current = target;
+    return current != target;
+  }
+  float scale() const { return current / 100.f; }
+};
+// Whether a wheel message zooms instead of reaching the game.
+inline bool wheelZooms(int mode, bool gameRotatesWithWheel, bool control) {
+  return mode == 2 || (mode == 1 && (!gameRotatesWithWheel || control));
+}
 inline bool loweringOrbit(Stick stick, const ModernSettings &settings) {
+  if (settings.cameraStickZoom)
+    return false;
   return (settings.invertY ? stick.y : -stick.y)<0;
 }
 inline bool cameraPitchCall(uintptr_t returnRva) {
@@ -288,7 +341,8 @@ struct OrbitControls {
     if (!consecutive)
       return 0;
     constexpr float radiansPerDegree = 0.017453292519943295f;
-    float pitchStep =
+    // With stick zoom, up/down belongs to distance and the height stays put.
+    float pitchStep = settings.cameraStickZoom ? 0.f :
         stick.y * settings.cameraPitchSpeed * radiansPerDegree * elapsed / 30;
     pitch += settings.invertY ? pitchStep : -pitchStep;
     pitch = std::clamp(pitch, -2.8f, 2.8f);

@@ -45,6 +45,13 @@ static void loadModernSettings() {
       std::clamp(read("CameraPitchSpeed", 90), 30, 180);
   modernSettings.cameraDeadzone =
       std::clamp(read("CameraDeadzone", 8689), 0, 29490);
+  modernSettings.cameraDistance =
+      gurumin::clampCameraDistance(read("CameraDistance", 100));
+  modernSettings.cameraStickZoom = read("CameraStickZoom", 0) != 0;
+  modernSettings.cameraWheelZoom = std::clamp(read("CameraWheelZoom", 1), 0, 2);
+  int zoomIn = read("CameraZoomInKey", 0x21), zoomOut = read("CameraZoomOutKey", 0x22);
+  modernSettings.cameraZoomInKey = zoomIn > 0 && zoomIn < 255 ? zoomIn : 0x21;
+  modernSettings.cameraZoomOutKey = zoomOut > 0 && zoomOut < 255 ? zoomOut : 0x22;
   int shadow = read("ShadowResolution", 256);
   if (gurumin::validShadowResolution(shadow))
     modernSettings.shadowResolution = shadow;
@@ -57,6 +64,15 @@ static void loadModernSettings() {
   int vrScale = read("VRScale", 0);
   if (gurumin::validVrScale(vrScale))
     modernSettings.vrScale = vrScale;
+}
+// The in-game camera distance is a single key; other settings stay untouched.
+static void saveCameraDistance(int percent) {
+  if (!modernIniPath())
+    return;
+  char text[16];
+  snprintf(text, sizeof(text), "%d", gurumin::clampCameraDistance(percent));
+  if (!WritePrivateProfileStringA("GuruminModern", "CameraDistance", text, modernIni))
+    log("Camera distance save error=%lu", (unsigned long)GetLastError());
 }
 static bool saveModernSettings(const gurumin::ModernSettings &s) {
   if (!modernIniPath())

@@ -24,14 +24,23 @@ using CameraMovementFn=unsigned(__cdecl*)(float*,float*,float,float);
 static CameraMovementFn nativeCameraMovement;
 struct OrbitRenderPose {
   CameraVector nativeEye{}, nativeTarget{}, eye{}, target{};
+  CameraVector renderEye{}; // eye after the player's distance; used to draw
   float view[16]{};
   unsigned tick=~0u;
   int scene=0;
-  bool prepared=false, built=false;
+  bool prepared=false, built=false, zoomed=false;
 };
 static OrbitRenderPose orbitRenderPose;
 static int orbitScene;
 static gurumin::OrbitControls orbitControls;
+// Player camera distance: wheel / keys / optional stick, eased per tick and
+// saved to the INI shortly after the last change.
+static gurumin::CameraZoom cameraZoom;
+static int cameraWheel;
+static unsigned cameraZoomTick = ~0u;
+static double cameraZoomChanged;
+static bool cameraZoomDirty;
+static void saveCameraDistance(int percent);
 struct CameraSample {
   gurumin::Stick stick;
   double time = 0;
@@ -152,7 +161,40 @@ static bool cameraOutputsIndependent(float *eye, float *target) {
   };
   return !imageOverlap(a) && !imageOverlap(b);
 }
+static void updateCameraZoom() {
+  unsigned tick=game<unsigned>(0x1de47f4);
+  unsigned ticks=cameraZoomTick==~0u ? 1 : tick-cameraZoomTick;
+  cameraZoomTick=tick;
+  if(!ticks) return;
+  float before=cameraZoom.target;
+  if(cameraEligible()) {
+    // Held keys: about 75% of the authored distance per second.
+    if(GetAsyncKeyState(modernSettings.cameraZoomInKey)&0x8000)
+      cameraZoom.step(-2.5f*ticks);
+    if(GetAsyncKeyState(modernSettings.cameraZoomOutKey)&0x8000)
+      cameraZoom.step(2.5f*ticks);
+    // Each wheel notch (120) toward the screen moves 10% closer.
+    cameraZoom.step(-10.f*cameraWheel/120.f);
+    if(modernSettings.cameraStickZoom && cameraSample.valid &&
+       nowSeconds()-cameraSample.time<=.1) {
+      float y=modernSettings.invertY ? -cameraSample.stick.y : cameraSample.stick.y;
+      cameraZoom.step(-3.f*y*ticks);
+    }
+  }
+  cameraWheel=0;
+  cameraZoom.ease(ticks);
+  if(cameraZoom.target!=before) {
+    cameraZoomDirty=true;
+    cameraZoomChanged=nowSeconds();
+  }
+  if(cameraZoomDirty && nowSeconds()-cameraZoomChanged>1.5) {
+    cameraZoomDirty=false;
+    modernSettings.cameraDistance=int(std::lround(cameraZoom.target));
+    saveCameraDistance(modernSettings.cameraDistance);
+  }
+}
 static unsigned __cdecl cameraUpdateHook(float *eyeOut, float *targetOut) {
+  if(!vrSession) updateCameraZoom();
   orbitRenderPose={};
   int scene=game<int>(0xf32c78);
   char mapName[64]{};
@@ -272,9 +314,33 @@ static float *__cdecl cameraViewHook(float *out,CameraVector eye,
     if(vrCullingPose(headEye.v,headTarget.v))
       return nativeCameraView(out,headEye,headTarget,axes,roll);
   }
-  float *result=nativeCameraView(out,use?orbitRenderPose.eye:eye,
-      use?orbitRenderPose.target:target,axes,roll);
-  if(use && result) {
+  // Player distance applies to the authored and the manual camera alike.
+  // Gameplay only (HUD on screen): scripted scenes and demos keep their framing.
+  bool zoom=caller==0x1a992a && !vrSession && cameraZoom.current!=100.f &&
+      hudSeen && frames-lastHudFrame<=10 && orbitCameraOwned() &&
+      (use || !orbitRenderPose.prepared);
+  CameraVector viewEye=use?orbitRenderPose.eye:eye;
+  CameraVector viewTarget=use?orbitRenderPose.target:target;
+  if(zoom) {
+    CameraVector zoomed=viewEye;
+    if(gurumin::zoomCamera(zoomed.v,viewTarget.v,cameraZoom.scale())) {
+      // Farther than authored: stop at walls instead of looking through them.
+      if(cameraZoom.current>100.f) constrainCameraOutput(zoomed.v,viewTarget.v);
+      viewEye=zoomed;
+    } else zoom=false;
+  }
+  float *result=nativeCameraView(out,viewEye,viewTarget,axes,roll);
+  if((use || zoom) && result) {
+    if(!use) {
+      orbitRenderPose.nativeEye=eye;
+      orbitRenderPose.nativeTarget=target;
+      orbitRenderPose.eye=eye;
+      orbitRenderPose.target=target;
+      orbitRenderPose.scene=game<int>(0xf32c78);
+      orbitRenderPose.tick=game<unsigned>(0x1de47f4);
+    }
+    orbitRenderPose.renderEye=viewEye;
+    orbitRenderPose.zoomed=zoom;
     memcpy(orbitRenderPose.view,result,64);
     orbitRenderPose.built=true;
   }
@@ -291,13 +357,28 @@ static void __cdecl cameraWorldHook() {
       !memcmp(target,orbitRenderPose.nativeTarget.v,16) &&
       !memcmp(reinterpret_cast<void*>(gameBase+0x9a9b00),orbitRenderPose.view,64);
   if(!use) { nativeCameraWorld(); return; }
-  CameraVector savedEye,savedTarget;
+  CameraVector savedEye,savedTarget,savedFrameEye,savedFrameTarget;
+  // Map draws pick their cells from per-frame copies made after the view
+  // build (eye 0x1dffed8, target 0x1e00ee8). A zoomed camera moves far enough
+  // to need cells from where it really is; plain orbit keeps the native copies.
+  auto frameEye=reinterpret_cast<float*>(gameBase+0x1dffed8);
+  auto frameTarget=reinterpret_cast<float*>(gameBase+0x1e00ee8);
+  const auto &drawnEye=orbitRenderPose.renderEye;
+  bool zoomed=orbitRenderPose.zoomed;
   memcpy(savedEye.v,eye,16);memcpy(savedTarget.v,target,16);
-  memcpy(eye,orbitRenderPose.eye.v,16);memcpy(target,orbitRenderPose.target.v,16);
+  memcpy(savedFrameEye.v,frameEye,16);memcpy(savedFrameTarget.v,frameTarget,16);
+  memcpy(eye,drawnEye.v,16);memcpy(target,orbitRenderPose.target.v,16);
+  if(zoomed) {
+    memcpy(frameEye,drawnEye.v,12);memcpy(frameTarget,orbitRenderPose.target.v,12);
+  }
   nativeCameraWorld();
   // Restore only our publication; preserve any legitimate native replacement.
-  bool unchanged=!memcmp(eye,orbitRenderPose.eye.v,16) &&
+  bool unchanged=!memcmp(eye,drawnEye.v,16) &&
                  !memcmp(target,orbitRenderPose.target.v,16);
+  if(zoomed && !memcmp(frameEye,drawnEye.v,12) &&
+     !memcmp(frameTarget,orbitRenderPose.target.v,12)) {
+    memcpy(frameEye,savedFrameEye.v,16);memcpy(frameTarget,savedFrameTarget.v,16);
+  }
   if(unchanged) { memcpy(eye,savedEye.v,16);memcpy(target,savedTarget.v,16); }
   else orbitRenderPose={};
 }
@@ -355,6 +436,38 @@ static void __fastcall cameraPitchHook(float *vector, void *,
         orbitControls.pitch, caller == 0x314164 || caller == 0x3141e7);
   nativePitch(vector, nativeAngle);
 }
+// The mouse wheel zooms the free camera during gameplay; elsewhere (menus,
+// scripted scenes) it reaches the game unchanged.
+static WNDPROC gameWindowProc;
+static bool gameWindowUnicode, gameWheelRotation=true;
+static LRESULT CALLBACK cameraWindowHook(HWND w, UINT m, WPARAM wp, LPARAM lp) {
+  if(m==WM_MOUSEWHEEL && cameraEligible() &&
+     gurumin::wheelZooms(modernSettings.cameraWheelZoom,gameWheelRotation,
+                         (GET_KEYSTATE_WPARAM(wp)&MK_CONTROL)!=0)) {
+    cameraWheel+=GET_WHEEL_DELTA_WPARAM(wp);
+    return 0;
+  }
+  return gameWindowUnicode ? CallWindowProcW(gameWindowProc,w,m,wp,lp)
+                           : CallWindowProcA(gameWindowProc,w,m,wp,lp);
+}
+static void installCameraWheel() {
+  if(gameWindowProc || !gameWindow || vrSession || !modernSettings.cameraWheelZoom) return;
+  // The game's "Rotate Camera With Wheel" option (WROT, on by default).
+  char path[MAX_PATH];
+  DWORD n=GetEnvironmentVariableA("APPDATA",path,MAX_PATH);
+  if(n && n<MAX_PATH-32) {
+    strcat(path,"\\FALCOM\\GURUMIN\\config.ini");
+    gameWheelRotation=GetPrivateProfileIntA("CONFIG","WROT",1,path)!=0;
+  }
+  gameWindowUnicode=IsWindowUnicode(gameWindow)!=FALSE;
+  auto hook=reinterpret_cast<LONG_PTR>(cameraWindowHook);
+  LONG_PTR previous=gameWindowUnicode ? SetWindowLongPtrW(gameWindow,GWLP_WNDPROC,hook)
+                                      : SetWindowLongPtrA(gameWindow,GWLP_WNDPROC,hook);
+  gameWindowProc=reinterpret_cast<WNDPROC>(previous);
+  log("Camera wheel zoom %s mode=%d gameWheelRotation=%d",
+      gameWindowProc?"enabled":"unavailable",modernSettings.cameraWheelZoom,
+      int(gameWheelRotation));
+}
 static void installCameraHooks() {
   if (!supported || !(modernSettings.freeCamera || vrSession) || cameraHooksActive)
     return;
@@ -403,6 +516,8 @@ static void installCameraHooks() {
     return;
   }
   cameraSegment = reinterpret_cast<CameraSegmentFn>(gameBase + 0x361d30);
+  cameraZoom.reset(modernSettings.cameraDistance);
+  installCameraWheel();
   cameraHooksActive = true;
   orbitScene = game<int>(0xf32c78);
   establishedOrbit = false;

@@ -171,4 +171,43 @@ int main() {
   assert(!commandLineRequestsVr("\"C:\\x -vr\\game.exe\" -foo"));
   assert(!commandLineRequestsVr("game.exe -vrx"));
   assert(!commandLineRequestsVr(nullptr) && !commandLineRequestsVr(""));
+  // Camera distance: defaults, bounds and eye scaling along target->eye.
+  assert(defaults.cameraDistance == 100 && !defaults.cameraStickZoom &&
+         defaults.cameraWheelZoom == 1 && defaults.cameraZoomInKey == 0x21 &&
+         defaults.cameraZoomOutKey == 0x22);
+  assert(clampCameraDistance(10) == MinCameraDistance &&
+         clampCameraDistance(999) == MaxCameraDistance && clampCameraDistance(150) == 150);
+  float zEye[4] = {10, 0, 5, 1}, zTarget[4] = {0, 0, 1, 1};
+  assert(zoomCamera(zEye, zTarget, 2));
+  assert(zEye[0] == 20 && zEye[1] == 0 && zEye[2] == 9 && zEye[3] == 1);
+  assert(!zoomCamera(zEye, zTarget, 0) && !zoomCamera(zEye, zTarget, NAN));
+  float badEye[4] = {NAN, 0, 0, 1};
+  assert(!zoomCamera(badEye, zTarget, 1.5f) && std::isnan(badEye[0]));
+  CameraZoom zoomer;
+  zoomer.reset(40);
+  assert(zoomer.current == MinCameraDistance && zoomer.target == MinCameraDistance);
+  zoomer.reset(100);
+  zoomer.step(-10.f * 3); // three wheel notches closer
+  assert(zoomer.target == 70.f && zoomer.current == 100.f);
+  bool easing = zoomer.ease(1);
+  assert(easing && zoomer.current < 100.f && zoomer.current > 70.f);
+  for (int i = 0; i < 60 && zoomer.ease(1); ++i) {}
+  assert(zoomer.current == 70.f && !zoomer.ease(1));
+  zoomer.step(1000);
+  assert(zoomer.target == MaxCameraDistance);
+  zoomer.step(NAN);
+  assert(zoomer.target == MaxCameraDistance);
+  assert(std::abs(CameraZoom{}.scale() - 1.f) < 1e-6f);
+  // Wheel: auto mode leaves the game's own wheel rotation alone unless Ctrl.
+  assert(!wheelZooms(0, false, true));
+  assert(wheelZooms(1, false, false) && !wheelZooms(1, true, false) && wheelZooms(1, true, true));
+  assert(wheelZooms(2, true, false));
+  // Stick zoom: up/down no longer tilts the camera, left/right still orbits.
+  ModernSettings stickZoom;
+  stickZoom.cameraStickZoom = true;
+  OrbitControls level;
+  level.advance(1, {1, 1}, stickZoom);
+  float levelYaw = level.advance(2, {1, 1}, stickZoom);
+  assert(level.pitch == 0 && levelYaw != 0);
+  assert(!loweringOrbit({0, 1}, stickZoom) && !loweringOrbit({0, -1}, stickZoom));
 }

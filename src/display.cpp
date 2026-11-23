@@ -1270,6 +1270,37 @@ static unsigned __fastcall projectedQuadHook(void *texture,void*,
         actualViewport.Width, actualViewport.Height, savedWidth, savedHeight);
   return result;
 }
+// Depth of field (game config DOF=1) copies the scene between full-size
+// off-screen targets with two native quads sized from the current canvas, not
+// from the bound viewport: 0x38d310 (blur copy) and 0x390e70 (final combine).
+// viewportHook narrows that canvas to the proportional 4:3 HUD width for any
+// output-sized viewport, so they must see the real viewport instead.
+struct ViewportCanvas {
+  int width = game<int>(0x508b14), height = game<int>(0x508b18);
+  ViewportCanvas() {
+    // In VR the pass target holds both eyes; the quads cover all of it.
+    if (supported && actualViewport.Width && actualViewport.Height) {
+      game<int>(0x508b14) = actualViewport.Width;
+      game<int>(0x508b18) = actualViewport.Height;
+    }
+  }
+  ~ViewportCanvas() {
+    game<int>(0x508b14) = width;
+    game<int>(0x508b18) = height;
+  }
+};
+using TargetCopyFn = unsigned(__thiscall *)(void *);
+static TargetCopyFn targetCopy;
+static unsigned __fastcall targetCopyHook(void *source, void *) {
+  ViewportCanvas canvas;
+  return targetCopy(source);
+}
+using FocusCombineFn = unsigned(__thiscall *)(void *, void *, void *);
+static FocusCombineFn focusCombine;
+static unsigned __fastcall focusCombineHook(void *a, void *, void *b, void *c) {
+  ViewportCanvas canvas;
+  return focusCombine(a, b, c);
+}
 template <class T>
 static bool nativeHook(uintptr_t rva, T detour, T &original) {
   auto addr = reinterpret_cast<void *>(gameBase + rva);
@@ -1293,6 +1324,10 @@ static void installNativeHooks() {
   nativeHookFailure = false;
   nativeHook(0x392750, solidRectHook, solidRect);
   nativeHook(0x1defb0, fadeHook, nativeFade);
+  nativeHookFailure |= MH_CreateHook(reinterpret_cast<void*>(gameBase+0x38d310),
+      reinterpret_cast<void*>(targetCopyHook),reinterpret_cast<void**>(&targetCopy))!=MH_OK;
+  nativeHookFailure |= MH_CreateHook(reinterpret_cast<void*>(gameBase+0x390e70),
+      reinterpret_cast<void*>(focusCombineHook),reinterpret_cast<void**>(&focusCombine))!=MH_OK;
   nativeHookFailure |= MH_CreateHook(reinterpret_cast<void*>(gameBase+0x37fbe0),
       reinterpret_cast<void*>(projectedQuadHook),reinterpret_cast<void**>(&projectedQuad))!=MH_OK;
   nativeHook(0x1cf280, upperHook, upperHud);

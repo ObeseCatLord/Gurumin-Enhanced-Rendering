@@ -501,3 +501,26 @@ Headset follow-up, 2026-10-14 (Bigscreen Beyond, Envision/Monado, GE-Proton10-34
 - Desktop water reflection: pass 0x5dcea0 mirrors MainVP via 0x5c9750 (single
   caller); the hook passes this frame's interpolated scene VP. Hook verified to
   install; not yet observed on a water map.
+
+Issues #1 and #2, 2026-11-22:
+- #1 (scene cropped to H*4/3 with stale title art, reported on Windows 10):
+  reproduced on Proton/DXVK with the game's DOF=1 (%APPDATA%\FALCOM\GURUMIN\
+  config.ini); every earlier lab had DOF=0. The DOF chain (0x5d4c0b-0x5d4fbe,
+  gated by [0x21e47fc]) binds full-size named targets (viewport = output size),
+  so viewportHook narrows canvas 0x508b14 to min(W, H*4/3). Native quads
+  0x38d310 (copy, called twice) and 0x390e70 (combine, ret 8) size position and
+  UV from 0x508b14/0x508b18 over target edge 0x508b1c, cropping the scene; the
+  rest of the target keeps an old frame. Both are wrapped so the canvas equals
+  the bound viewport while they run, including the VR pass (without it the
+  right eye of the side-by-side target was cropped at 75%). Found by a
+  delegated investigation; verified before/after at 1920x1080 incl. the menu
+  shrink, and in VR (both eyes complete).
+- #2: free camera distance applied at the view build (0x1a992a) to the authored
+  orbit pose or the native pose, then the same final eye is published to the
+  camera globals and the per-frame copies 0x1dffed8/0x1e00ee8 during the scene
+  root (copies only while zoomed: A/B at 250% in the village showed a missing
+  ground wedge without them; plain orbit keeps the native copies as in 1.0).
+  Zoom applies only with the gameplay HUD visible (the title demo's scripted
+  camera otherwise zoomed). Zoom-out uses the existing camera segment constraint. The game's own
+  wheel rotation is config key WROT (default 1, verified: plain wheel turns the
+  camera), so wheel zoom is Ctrl+wheel unless WROT=0 or CameraWheelZoom=2.
