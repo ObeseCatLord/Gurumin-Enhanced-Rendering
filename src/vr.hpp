@@ -63,6 +63,9 @@ static bool vrHaveRequest, vrPassRan;
 static unsigned vrPassFrame = ~0u, vrRigFrame = ~0u;
 static IDirect3DSurface9 *vrSceneSurface, *vrSavedTarget;
 static float vrLastEye[2][16], vrLastEyeAlt[2][16];
+// Game frame timing in VR: time waiting for the headset vs whole frame.
+static double vrWaitSeconds, vrFrameSeconds, vrLastPresentTime;
+static unsigned vrTimedFrames;
 static unsigned vrStatPasses, vrStatBlits, vrStatRedirects, vrStatWorld, vrStatScreen,
     vrStatRootCalls;
 static bool vrLastEyesValid;
@@ -177,8 +180,8 @@ static void vrStart() {
   if (started || launcherWindow)
     return;
   started = true;
-  vrSession = supported && (modernSettings.vrEnabled ||
-                            gurumin::commandLineRequestsVr(GetCommandLineA()));
+  vrSession = supported && !gurumin::commandLineRequestsFlat(GetCommandLineA()) &&
+              (modernSettings.vrEnabled || gurumin::commandLineRequestsVr(GetCommandLineA()));
   if (!vrSession)
     return;
   loadVrConfig();
@@ -405,7 +408,8 @@ static bool vrClaim() {
     auto &slot = vrChannel.shared->slot[i];
     const auto &r = slot.request;
     if (slot.state == SlotState::Requested && !slot.cancelled &&
-        r.width == vrEyeWidth && r.height == vrEyeHeight && r.input.focused &&
+        // Visible but unfocused (dashboard open) still renders; input waits.
+        r.width == vrEyeWidth && r.height == vrEyeHeight &&
         r.input.headValid && now >= r.input.tickMs && now - r.input.tickMs < 200) {
       slot.state = SlotState::Rendering;
       vrFrameRequest = r;
@@ -1088,10 +1092,15 @@ static void vrBeforePresent(IDirect3DDevice9 *d) {
   vrHudRedirected = vrPassRan = false;
   vrPublishGameState();
   static unsigned statLines;
-  if ((diagnostics || statLines < 20) && frames % 600 == 0 && ++statLines)
+  if ((diagnostics || statLines < 20) && frames % 600 == 0 && ++statLines) {
     log("VR stats frame=%u rootCalls=%u passes=%u blits=%u redirects=%u world=%u screen=%u "
-        "unscoped=%u", frames, vrStatRootCalls, vrStatPasses, vrStatBlits, vrStatRedirects,
-        vrStatWorld, vrStatScreen, vrUnscopedDraws);
+        "unscoped=%u frameMs=%.2f waitMs=%.2f", frames, vrStatRootCalls, vrStatPasses,
+        vrStatBlits, vrStatRedirects, vrStatWorld, vrStatScreen, vrUnscopedDraws,
+        vrTimedFrames ? 1000 * vrFrameSeconds / vrTimedFrames : 0.,
+        vrTimedFrames ? 1000 * vrWaitSeconds / vrTimedFrames : 0.);
+    vrWaitSeconds = vrFrameSeconds = 0;
+    vrTimedFrames = 0;
+  }
 }
 
 // While the headset shows the game, the desktop window is optional: a
@@ -1120,17 +1129,31 @@ static void vrAfterPresent() {
       Sleep(1);
     return;
   }
-  double limit = nowSeconds() + .025;
-  for (;;) {
+  double waitStart = nowSeconds(), limit = waitStart + .025;
+  for (unsigned spins = 0;; ++spins) {
     vrPollFences();
     auto *slots = vrChannel.shared->slot;
     if (slots[0].state == gurumin::vr::SlotState::Requested ||
         slots[1].state == gurumin::vr::SlotState::Requested || !vrHostConnected() ||
         nowSeconds() >= limit)
       break;
-    Sleep(0);
-    YieldProcessor();
+    // Steam Frame: sleep instead of spinning; each spin costs a syscall under
+    // x86 emulation and a whole core on a battery headset. Elsewhere keep the
+    // low-latency spin that PC runtimes were verified with.
+    if (steamFrame() && spins >= 50)
+      Sleep(1);
+    else {
+      Sleep(0);
+      YieldProcessor();
+    }
   }
+  double now = nowSeconds();
+  if (vrLastPresentTime > 0 && now - vrLastPresentTime < .5) {
+    vrWaitSeconds += now - waitStart;
+    vrFrameSeconds += now - vrLastPresentTime;
+    ++vrTimedFrames;
+  }
+  vrLastPresentTime = now;
 }
 
 // Native input poll (RVA 0x3ae330) DIJOYSTATE: overlay VR controllers as an
@@ -1155,6 +1178,7 @@ static void vrInputOverlay(int *state) {
   if (!game<int>(vrconst::XInputModule) && !game<void *>(vrconst::DInputDevice)) {
     for (int i = 0; i < 6; ++i)
       state[i] = 0x8000;
+    state[8] = -1; // POV hat centred
     memset(bytes, 0, 12);
   }
   float px = (state[3] - 0x8000) / 32767.f, py = -(state[4] - 0x8000) / 32767.f;
@@ -1193,6 +1217,20 @@ static void vrInputOverlay(int *state) {
     press(9, input.buttons[1] & Thumb);
     press(10, lt > .5f);
     press(11, rt > .5f);
+    // Full-layout profiles (Steam Frame) name X / Y / Start / Back and a D-pad.
+    uint32_t any = input.buttons[0] | input.buttons[1];
+    press(2, any & ButtonX);
+    press(3, any & ButtonY);
+    press(6, any & Back);
+    press(7, any & Start);
+    int dx = (any & DpadRight ? 1 : 0) - (any & DpadLeft ? 1 : 0);
+    int dy = (any & DpadUp ? 1 : 0) - (any & DpadDown ? 1 : 0);
+    if (dx || dy) {
+      // DIJOYSTATE POV hat (offset 0x20), hundredths of a degree clockwise from up.
+      static const int pov[3][3] = {{22500, 18000, 13500}, {27000, -1, 9000},
+                                    {31500, 0, 4500}};
+      state[8] = pov[dy + 1][dx + 1];
+    }
     vrLastInputTick = GetTickCount64();
   }
   bool left = bytes[8] & 0x80, right = bytes[9] & 0x80;

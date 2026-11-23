@@ -171,6 +171,13 @@ int main() {
   assert(!commandLineRequestsVr("\"C:\\x -vr\\game.exe\" -foo"));
   assert(!commandLineRequestsVr("game.exe -vrx"));
   assert(!commandLineRequestsVr(nullptr) && !commandLineRequestsVr(""));
+  // -novr / -flat play flat for one launch; -vr does not count as flat.
+  assert(commandLineRequestsFlat("game.exe -novr") && commandLineRequestsFlat("game.exe /SKIP -Flat"));
+  assert(!commandLineRequestsFlat("game.exe -vr") && !commandLineRequestsFlat("game.exe -flatter"));
+  assert(!commandLineRequestsFlat("\"C:\\x -novr\\game.exe\"") && !commandLineRequestsFlat(nullptr));
+  // VR default: explicit choice wins; absent, only a Steam Frame defaults on.
+  assert(vrEnabledByDefault(-1, true) && !vrEnabledByDefault(-1, false));
+  assert(!vrEnabledByDefault(0, true) && vrEnabledByDefault(1, false));
   // Camera distance: defaults, bounds and eye scaling along target->eye.
   assert(defaults.cameraDistance == 100 && !defaults.cameraStickZoom &&
          defaults.cameraWheelZoom == 1 && defaults.cameraZoomInKey == 0x21 &&

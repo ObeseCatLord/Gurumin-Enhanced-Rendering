@@ -9,6 +9,11 @@ A rendering and camera mod for **Gurumin: A Monstrous Adventure**, Steam version
 
 [Download](https://github.com/ObeseCatLord/gurumin-enhanced-rendering/releases/latest)
 
+> **Steam Frame: play Gurumin in VR, standalone on the headset.** Copy the mod
+> into the game folder on your Frame and Gurumin starts in VR, using the Frame's
+> own controllers, at the headset's recommended 1728×1728 per eye and 72 Hz.
+> No launch options, no PC. [Steam Frame setup →](#steam-frame)
+
 Also Consider:
 These mods add the PSP only outfits to the PC version
 
@@ -30,6 +35,9 @@ I recommend mods from [Tenome](https://github.com/Tenome/Gurumin-Modding) which 
 - Higher Resolution Shadows
 - FXAA
 - Optional third person stable VR support at either life size or diorama scales
+- **Steam Frame support**: runs standalone on the headset in VR by default, with
+  native Frame controller bindings. Every other device keeps flat play unless
+  you turn VR on.
 
 ## Install — copy into the game folder
 
@@ -73,7 +81,8 @@ Tick **VR (OpenXR)** in the launcher's *Display / Camera / VR* group, or start t
 game with `-vr` (e.g. in Steam's launch options after `%command%`) to use VR for
 that launch only. Pick **Life size scale** (stand in the world behind Parin) or
 **Diorama scale** (the level as a tabletop model in front of you). VR is off by
-default and nothing VR-related runs when it is off.
+default (except on a [Steam Frame](#steam-frame)) and nothing VR-related runs
+when it is off.
 
 Start your OpenXR runtime (SteamVR, or Monado/WiVRn e.g. via Envision) before or
 after the game; the mod launches its small OpenXR host
@@ -113,6 +122,37 @@ compositor and slow the game); set `VRDesktopMirror=1` to mirror the eyes there.
 
 VR limitations: water reflections are rendered once, from the centre of your
 head, rather than per eye.
+
+### Steam Frame
+
+Gurumin runs on the Steam Frame itself (the Windows game through Proton), and
+the mod starts it in VR there by default. On any other device VR stays off
+unless you enable it.
+
+1. Install Gurumin on the Frame from your Steam library.
+2. On the Frame, switch to **Desktop** (the **+** launcher), download the
+   release ZIP in the browser, and open it in **Dolphin**.
+3. Copy the contents of the ZIP's release folder (including `GuruminVR`) into
+   the game folder: in Steam, **Gurumin → Manage → Browse local files**.
+   No launch options or installer are needed on the Frame.
+4. Back in the headset, start Gurumin and pick **Skip Configuration and Play**
+   (or **Play**, then **Start Game** in the settings window). The game appears
+   behind the Steam menu; close the menu to start playing.
+
+| Action | Steam Frame controllers |
+|---|---|
+| Move Parin (relative to where you look) | Left stick |
+| Turn / raise the camera rig | Right stick |
+| A / B / X / Y | A / B / X / Y (right controller) |
+| Start (pause menu) / Back | Menu (right) / View (left) |
+| D-pad | D-pad (left controller) |
+| LB / RB | Bumpers or grips |
+| LT / RT | Triggers |
+| Recenter | Click both sticks |
+
+To play flat on the Frame for one launch, add `-novr` to Gurumin's launch
+options; to keep it flat, untick **VR (OpenXR)** in the settings window or set
+`VREnabled=0` in `GuruminModern.ini`.
 
 ## Compatibility and limitations
 

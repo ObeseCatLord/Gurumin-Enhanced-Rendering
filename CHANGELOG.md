@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0 — 2026-11-23
+
+- **Steam Frame support.** Gurumin runs standalone on the Steam Frame (Proton
+  on Arm64) and starts in VR there by default; every other device keeps flat
+  play unless VR is chosen. `-novr` plays flat for one launch. No launch options
+  are needed on the Frame. Tested on a Frame: zero-copy stereo at the
+  recommended 1728×1728 per eye, 72 frames per second in the measured scenes.
+- Native Steam Frame controller bindings (`XR_VALVE_frame_controller_interaction`):
+  A/B/X/Y, Menu = Start, View = Back, D-pad, bumpers and grips = LB/RB.
+- The VR view keeps rendering while the SteamVR dashboard is open (visible but
+  not focused); controls resume when it closes.
+- Steam Frame: low-power waits instead of spinning, about halving CPU use.
+
 ## 1.2.0 — 2026-11-22
 
 - Fix the scene being cropped to a 4:3 area with stale title-screen art beside

@@ -15,6 +15,7 @@ static bool modernIniPath() {
   strcpy(slash + 1, "GuruminModern.ini");
   return true;
 }
+static bool steamFrame();
 static void loadModernSettings() {
   modernSettings = {};
   if (!modernIniPath())
@@ -60,10 +61,30 @@ static void loadModernSettings() {
     modernSettings.antiAliasing = aa;
   modernSettings.uiFiltering = read("UIFiltering", 1) != 0;
   modernSettings.worldFiltering = read("WorldFiltering", 1) != 0;
-  modernSettings.vrEnabled = read("VREnabled", 0) != 0;
+  modernSettings.vrEnabled = gurumin::vrEnabledByDefault(read("VREnabled", -1), steamFrame());
   int vrScale = read("VRScale", 0);
   if (gurumin::validVrScale(vrScale))
     modernSettings.vrScale = vrScale;
+}
+// Steam Frame: the Windows game runs under Proton (Wine) with x86 emulation
+// on an Arm64 device. Only there does VR default to on; Windows PCs, Linux PCs
+// and Steam Deck keep flat play unless VR is chosen.
+static bool steamFrame() {
+  static int cached = -1;
+  if (cached >= 0)
+    return cached != 0;
+  HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+  bool wine = ntdll && GetProcAddress(ntdll, "wine_get_version");
+  USHORT process = 0, native = 0;
+  using IsWow64Process2Fn = BOOL(WINAPI *)(HANDLE, USHORT *, USHORT *);
+  auto query = reinterpret_cast<IsWow64Process2Fn>(reinterpret_cast<void *>(
+      GetProcAddress(GetModuleHandleA("kernel32.dll"), "IsWow64Process2")));
+  bool arm64 = query && query(GetCurrentProcess(), &process, &native) &&
+               native == 0xAA64; // IMAGE_FILE_MACHINE_ARM64
+  cached = wine && arm64;
+  log("Platform wine=%d nativeMachine=%04x steamFrame=%d", int(wine), unsigned(native),
+      cached);
+  return cached != 0;
 }
 // The in-game camera distance is a single key; other settings stay untouched.
 static void saveCameraDistance(int percent) {

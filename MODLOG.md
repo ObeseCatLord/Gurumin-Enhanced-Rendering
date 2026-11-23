@@ -525,3 +525,30 @@ Issues #1 and #2, 2026-11-22:
   and 250% match. Zoom-out uses the existing camera segment constraint. The game's own
   wheel rotation is config key WROT (default 1, verified: plain wheel turns the
   camera), so wheel zoom is Ctrl+wheel unless WROT=0 or CameraWheelZoom=2.
+
+Steam Frame, 2026-11-23 (SteamOS aarch64, Proton 11.0 ARM64, SteamVR/OpenXR 2.19.3):
+- Stock Gurumin build 603361 installed through Steam on the Frame; the 32-bit
+  game runs under FEX. No WINEDLLOVERRIDES is needed: with an empty launch
+  option the game-folder d3d9.dll still loads. The x64 host runs through
+  wineopenxr (D3D11 session, Vulkan underneath); DXVK shared images open, so
+  eyes stay zero-copy.
+- Detection: no Frame-specific environment variable exists for the game, so
+  "Steam Frame" means Wine (ntdll wine_get_version) + IsWow64Process2 native
+  machine ARM64 (0xAA64). x86-64 Proton reports 0x8664. Only then does VR
+  default on (VREnabled absent); the packaged INI leaves VREnabled unset.
+- Launching from the library leaves the SteamVR dashboard open, so the session
+  stays VISIBLE (4). The host now requests/renders whenever views are valid,
+  and input waits for FOCUSED; dashboard open/close cycles 5->4->5 verified.
+- Steam's launch options for app 322290: 0 = launcher, 1 = "Skip Configuration
+  and Play" (game.exe /skip). The MFC launcher renders on the Frame.
+- vrpreferences.json is loaded by SteamVR only for VR titles (Forefront, HL:A
+  logged; Gurumin never), so it is not shipped; the runtime recommends 1728.
+- Measured without probes: 72 pairs/s at both 1728 and 1440 per eye in the
+  new-game intro; game ~55% CPU, host ~5-10%. Earlier low figures were caused
+  by the probe's BMP dumps. Spin waits (Sleep(0)) used a full core each under
+  FEX; on Arm64 standalone the waits now sleep after 50 spins. PC loops are
+  unchanged.
+- Frame controller: profile /interaction_profiles/valve/frame_controller_valve;
+  SteamVR generated steam.app.322290_frame_controller binding JSON matches the
+  suggestion. New Input bits (X, Y, Start, Back, D-pad) map to DIJOYSTATE
+  buttons and the POV hat; existing bits/ABI unchanged.

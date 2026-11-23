@@ -63,8 +63,9 @@ struct ModernSettings {
   int vrScale = 0; // 0 life size, 1 diorama.
 };
 inline bool validVrScale(int scale) { return scale == 0 || scale == 1; }
-// "-vr" on the command line enables VR for one launch without saving it.
-inline bool commandLineRequestsVr(const char *line) {
+// Whether a whole command-line token (quote-aware, case-insensitive) is one
+// of `words` (a null-terminated list of lowercase spellings).
+inline bool commandLineHasFlag(const char *line, const char *const *words) {
   if (!line)
     return false;
   bool quoted = false;
@@ -86,8 +87,9 @@ inline bool commandLineRequestsVr(const char *line) {
             if (lower(token[i]) != word[i]) return false;
           return true;
         };
-        if (is("-vr") || is("--vr") || is("/vr"))
-          return true;
+        for (const char *const *w = words; *w; ++w)
+          if (is(*w))
+            return true;
         token = nullptr;
       }
       if (!c)
@@ -95,6 +97,21 @@ inline bool commandLineRequestsVr(const char *line) {
     } else if (!token)
       token = p;
   }
+}
+// "-vr" on the command line enables VR for one launch without saving it.
+inline bool commandLineRequestsVr(const char *line) {
+  static const char *const words[] = {"-vr", "--vr", "/vr", nullptr};
+  return commandLineHasFlag(line, words);
+}
+// "-novr" / "-flat" plays flat for one launch, even where VR is the default.
+inline bool commandLineRequestsFlat(const char *line) {
+  static const char *const words[] = {"-novr", "--novr", "/novr", "-flat", "--flat", nullptr};
+  return commandLineHasFlag(line, words);
+}
+// VR default: an explicit saved choice wins (saved 0/1; -1 when absent);
+// otherwise VR is on only on a Steam Frame.
+inline bool vrEnabledByDefault(int saved, bool steamFrame) {
+  return saved < 0 ? steamFrame : saved != 0;
 }
 // Room/shop identity remains useful for indoor collision, independently of
 // the town-only freecam exclusion. Native camera mode is not an indoor flag.

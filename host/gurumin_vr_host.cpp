@@ -124,7 +124,7 @@ struct Mutex {
   X(CreateActionSet) X(DestroyActionSet) X(CreateAction)                       \
   X(SuggestInteractionProfileBindings) X(AttachSessionActionSets)              \
   X(SyncActions) X(GetActionStateBoolean) X(GetActionStateFloat)              \
-  X(GetActionStateVector2f)
+  X(GetActionStateVector2f) X(GetCurrentInteractionProfile) X(PathToString)
 
 struct Api {
   HMODULE loader = nullptr;
@@ -185,6 +185,20 @@ struct Api {
 };
 #undef XR_FUNCTIONS
 
+// Proton on an Arm64 device (Steam Frame standalone), as the game DLL detects.
+bool standaloneArm64() {
+  static int cached = -1;
+  if (cached < 0) {
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    USHORT process = 0, native = 0;
+    using Fn = BOOL(WINAPI *)(HANDLE, USHORT *, USHORT *);
+    auto query = reinterpret_cast<Fn>(reinterpret_cast<void *>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2")));
+    cached = ntdll && GetProcAddress(ntdll, "wine_get_version") && query &&
+             query(GetCurrentProcess(), &process, &native) && native == 0xAA64;
+  }
+  return cached != 0;
+}
 void hresult(HRESULT result, const char *operation, Log &log) {
   if (FAILED(result)) {
     log.format("%s: %08lx", operation, (unsigned long)result);
@@ -364,6 +378,9 @@ struct Actions {
   XrActionSet set = XR_NULL_HANDLE;
   XrPath hand[2]{};
   XrAction stick{}, trigger{}, squeeze{}, primary{}, secondary{}, thumb{}, menu{};
+  // Steam Frame controller: full gamepad layout (XR_VALVE_frame_controller_interaction).
+  XrAction faceX{}, faceY{}, start{}, back{}, dpad[4]{};
+  bool frameProfile = false;
   XrPath path(Api &api, XrInstance instance, const char *name) {
     XrPath result = XR_NULL_PATH;
     api.check(api.StringToPath(instance, name, &result), "xrStringToPath");
@@ -398,6 +415,14 @@ struct Actions {
                    "Stick click (both sticks together recenter)",
                    XR_ACTION_TYPE_BOOLEAN_INPUT);
     menu = action(api, "menu", "Start (left) / Back (right)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    faceX = action(api, "x_button", "X button", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    faceY = action(api, "y_button", "Y button", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    start = action(api, "start", "Start / pause menu", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    back = action(api, "back", "Back / select", XR_ACTION_TYPE_BOOLEAN_INPUT);
+    const char *dpadNames[4][2] = {{"dpad_up", "D-pad up"}, {"dpad_right", "D-pad right"},
+                                   {"dpad_down", "D-pad down"}, {"dpad_left", "D-pad left"}};
+    for (int i = 0; i < 4; ++i)
+      dpad[i] = action(api, dpadNames[i][0], dpadNames[i][1], XR_ACTION_TYPE_BOOLEAN_INPUT);
     suggest(api, instance);
     XrSessionActionSetsAttachInfo attach{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
     attach.countActionSets = 1;
@@ -414,7 +439,19 @@ struct Actions {
       const char *name;
       std::vector<Binding> bindings;
     };
+    // Steam Frame: A/B/X/Y and Menu (Start) on the right, D-pad and View
+    // (Back) on the left; bumpers and grips both act as LB / RB.
+    const Profile frame{"/interaction_profiles/valve/frame_controller_valve",
+        {{&stick, 2, "thumbstick"}, {&trigger, 2, "trigger/value"},
+         {&squeeze, 2, "squeeze/value"}, {&squeeze, 2, "bumper/click"},
+         {&thumb, 2, "thumbstick/click"},
+         {&primary, 1, "a/click"}, {&secondary, 1, "b/click"},
+         {&faceX, 1, "x/click"}, {&faceY, 1, "y/click"},
+         {&start, 1, "menu/click"}, {&back, 0, "view/click"},
+         {&dpad[0], 0, "dpad_up/click"}, {&dpad[1], 0, "dpad_right/click"},
+         {&dpad[2], 0, "dpad_down/click"}, {&dpad[3], 0, "dpad_left/click"}}};
     const Profile profiles[] = {
+        frame,
         {"/interaction_profiles/oculus/touch_controller",
          {{&stick, 2, "thumbstick"}, {&trigger, 2, "trigger/value"},
           {&squeeze, 2, "squeeze/value"}, {&thumb, 2, "thumbstick/click"},
@@ -440,6 +477,8 @@ struct Actions {
     };
     unsigned accepted = 0;
     for (const auto &profile : profiles) {
+      if (&profile == &profiles[0] && !frameProfile)
+        continue;
       std::vector<XrActionSuggestedBinding> bindings;
       for (const auto &b : profile.bindings)
         for (int h = 0; h < 2; ++h)
@@ -512,6 +551,15 @@ struct Actions {
       if (boolean(api, session, secondary, h)) buttons |= Secondary;
       if (boolean(api, session, thumb, h)) buttons |= Thumb;
       if (boolean(api, session, menu, h)) buttons |= Menu;
+      if (frameProfile) {
+        if (boolean(api, session, faceX, h)) buttons |= ButtonX;
+        if (boolean(api, session, faceY, h)) buttons |= ButtonY;
+        if (boolean(api, session, start, h)) buttons |= Start;
+        if (boolean(api, session, back, h)) buttons |= Back;
+        const uint32_t bits[4] = {DpadUp, DpadRight, DpadDown, DpadLeft};
+        for (int i = 0; i < 4; ++i)
+          if (boolean(api, session, dpad[i], h)) buttons |= bits[i];
+      }
       input.buttons[h] = buttons;
     }
   }
@@ -591,14 +639,18 @@ struct Host {
     context->End(drainQuery.p);
     context->Flush();
     ULONGLONG deadline = GetTickCount64() + 500;
-    for (;;) {
+    for (unsigned spins = 0;; ++spins) {
       HRESULT result = context->GetData(drainQuery.p, nullptr, 0,
                                         D3D11_ASYNC_GETDATA_DONOTFLUSH);
       if (result == S_OK || FAILED(device->GetDeviceRemovedReason()))
         return true;
       if (FAILED(result) || GetTickCount64() >= deadline)
         return false;
-      Sleep(0);
+      // Steam Frame: sleep instead of burning a core under x86 emulation.
+      if (standaloneArm64() && spins >= 50)
+        Sleep(1);
+      else
+        Sleep(0);
     }
   }
   void connect(const std::wstring &token) {
@@ -642,6 +694,8 @@ struct Host {
     bool wine = GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "wine_get_version") != nullptr;
     log.write(wine ? "Wine/Proton: OpenXR goes through Proton's wineopenxr bridge"
                    : "Windows: using the packaged OpenXR loader");
+    if (standaloneArm64())
+      log.write("Arm64 standalone (Steam Frame): low-power waits");
     api.open(directory);
     uint32_t count = 0;
     api.check(api.EnumerateInstanceExtensionProperties(nullptr, 0, &count, nullptr),
@@ -659,14 +713,22 @@ struct Host {
                   "launch options and start Monado/SteamVR before the game");
       throw std::runtime_error("Runtime does not offer XR_KHR_D3D11_enable");
     }
-    const char *enabled[] = {XR_KHR_D3D11_ENABLE_EXTENSION_NAME};
+    // Steam Frame controllers get their own bindings when the runtime offers them.
+    bool frameControllers = std::any_of(extensions.begin(), extensions.end(), [](const auto &e) {
+      return !std::strcmp(e.extensionName, "XR_VALVE_frame_controller_interaction");
+    });
+    const char *enabled[] = {XR_KHR_D3D11_ENABLE_EXTENSION_NAME,
+                             "XR_VALVE_frame_controller_interaction"};
     XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
     std::strcpy(create.applicationInfo.applicationName, "Gurumin VR");
     std::strcpy(create.applicationInfo.engineName, "Gurumin Enhanced Rendering");
     create.applicationInfo.applicationVersion = create.applicationInfo.engineVersion = 1;
     create.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
-    create.enabledExtensionCount = 1;
+    create.enabledExtensionCount = frameControllers ? 2 : 1;
     create.enabledExtensionNames = enabled;
+    actions.frameProfile = frameControllers;
+    if (frameControllers)
+      log.write("Steam Frame controller profile available");
     api.check(api.CreateInstance(&create, &instance), "xrCreateInstance");
     api.instanceFunctions(instance);
     XrInstanceProperties runtime{XR_TYPE_INSTANCE_PROPERTIES};
@@ -811,7 +873,18 @@ struct Host {
       if (result == XR_EVENT_UNAVAILABLE)
         break;
       api.check(result, "xrPollEvent");
-      if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
+      if (event.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED && session) {
+        // Diagnostics: which controller bindings the runtime chose per hand.
+        for (unsigned h = 0; h < 2; ++h) {
+          XrInteractionProfileState profile{XR_TYPE_INTERACTION_PROFILE_STATE};
+          char name[XR_MAX_PATH_LENGTH] = "none";
+          uint32_t length = 0;
+          if (XR_SUCCEEDED(api.GetCurrentInteractionProfile(session, actions.hand[h], &profile)) &&
+              profile.interactionProfile != XR_NULL_PATH)
+            api.PathToString(instance, profile.interactionProfile, sizeof(name), &length, name);
+          log.format("Controller profile %s: %s", h ? "right" : "left", name);
+        }
+      } else if (event.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
         log.write("OpenXR instance loss pending");
         quit = true;
       } else if (event.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
@@ -1259,7 +1332,9 @@ struct Host {
       bool published = publish(input);
       if (published && frameState.shouldRender && gameReady()) {
         ensureChains();
-        if (validViews && input.focused && input.headValid) {
+        // Render whenever visible (e.g. behind the SteamVR dashboard); only
+        // the controls wait for input focus.
+        if (validViews && input.headValid) {
           Request request{};
           request.sequence = ++requestSequence;
           request.predictedTime = frameState.predictedDisplayTime;

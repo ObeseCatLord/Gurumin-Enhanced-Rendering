@@ -19,6 +19,9 @@ enum Button : uint32_t {
   Secondary = 2, // B (right) / Y (left)
   Thumb = 4,     // Stick or trackpad click
   Menu = 8,      // Menu / view button where the profile has one
+  // Profiles with a full gamepad layout (Steam Frame) name these directly.
+  ButtonX = 16, ButtonY = 32, Start = 64, Back = 128,
+  DpadUp = 256, DpadRight = 512, DpadDown = 1024, DpadLeft = 2048,
 };
 // What a published slot carries.
 enum Content : uint32_t {
