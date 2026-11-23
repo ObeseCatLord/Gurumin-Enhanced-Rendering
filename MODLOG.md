@@ -552,3 +552,5 @@ Steam Frame, 2026-11-23 (SteamOS aarch64, Proton 11.0 ARM64, SteamVR/OpenXR 2.19
   SteamVR generated steam.app.322290_frame_controller binding JSON matches the
   suggestion. New Input bits (X, Y, Start, Back, D-pad) map to DIJOYSTATE
   buttons and the POV hat; existing bits/ABI unchanged.
+- Hands-on: the user played the 1.3.0 release files on their Steam Frame and
+  confirmed view, HUD, movement, camera, all buttons, D-pad and recenter.
